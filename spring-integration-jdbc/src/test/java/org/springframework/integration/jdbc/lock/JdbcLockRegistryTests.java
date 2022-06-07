@@ -304,6 +304,42 @@ public class JdbcLockRegistryTests {
 	}
 
 	@Test
+	
+	public void testExpireTwoThreads() throws Exception {
+		DefaultLockRepository client = new DefaultLockRepository(dataSource);
+		client.setTimeToLive(1);
+		client.afterPropertiesSet();
+		JdbcLockRegistry registry = new JdbcLockRegistry(client);
+		Lock lock1 = registry.obtain("foo");
+		AtomicBoolean locked = new AtomicBoolean();
+		CountDownLatch latch1 = new CountDownLatch(1);
+		CountDownLatch latch2 = new CountDownLatch(1);
+		CountDownLatch latch3 = new CountDownLatch(1);
+		lock1.lockInterruptibly();
+		this.taskExecutor.submit(() -> {
+			Lock lock2 = registry.obtain("foo");
+			try {
+				latch1.countDown();
+				assertThat(latch2.await(10, TimeUnit.SECONDS)).isTrue();
+				lock2.lockInterruptibly();
+				locked.set(true);
+			}
+			catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+			finally {
+				lock2.unlock();
+				latch3.countDown();
+			}
+		});
+		assertThat(latch1.await(10, TimeUnit.SECONDS)).isTrue();
+		Thread.sleep(100);
+		latch2.countDown();
+		assertThat(latch3.await(10, TimeUnit.SECONDS)).isTrue();
+		assertThat(locked.get()).isTrue();
+	}
+
+	@Test
 	public void testLockRenew() {
 		final Lock lock = this.registry.obtain("foo");
 

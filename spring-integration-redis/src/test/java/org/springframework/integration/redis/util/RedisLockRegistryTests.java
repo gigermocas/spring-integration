@@ -359,6 +359,39 @@ public class RedisLockRegistryTests extends RedisAvailableTests {
 
 	@Test
 	@RedisAvailable
+	public void testExpireTwoThreads() throws Exception {
+		RedisLockRegistry registry = new RedisLockRegistry(getConnectionFactoryForTest(), this.registryKey, 100);
+		Lock lock1 = registry.obtain("foo");
+		AtomicBoolean locked = new AtomicBoolean();
+		CountDownLatch latch1 = new CountDownLatch(1);
+		CountDownLatch latch2 = new CountDownLatch(1);
+		CountDownLatch latch3 = new CountDownLatch(1);
+		lock1.lockInterruptibly();
+		Executors.newSingleThreadExecutor().execute(() -> {
+			Lock lock2 = registry.obtain("foo");
+			try {
+				latch1.countDown();
+				assertThat(latch2.await(10, TimeUnit.SECONDS)).isTrue();
+				lock2.lockInterruptibly();
+				locked.set(true);
+			}
+			catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+			finally {
+				lock2.unlock();
+				latch3.countDown();
+			}
+		});
+		assertThat(latch1.await(10, TimeUnit.SECONDS)).isTrue();
+		waitForExpire("foo");
+		latch2.countDown();
+		assertThat(latch3.await(10, TimeUnit.SECONDS)).isTrue();
+		assertThat(locked.get()).isTrue();
+	}
+
+	@Test
+	@RedisAvailable
 	public void testExceptionOnExpire() throws Exception {
 		RedisLockRegistry registry = new RedisLockRegistry(getConnectionFactoryForTest(), this.registryKey, 1);
 		Lock lock1 = registry.obtain("foo");
